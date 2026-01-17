@@ -1,62 +1,45 @@
 package main
 
 import (
+	server "MapReduce/rpc_server"
+	"MapReduce/worker"
 	"fmt"
+	"log"
+	"net"
 	"net/rpc"
+	"sync"
 )
 
-type MapArgs struct {
-	Key     string
-	Content string
-}
-
-type MapResults struct {
-	Word string
-	Amt  string
-}
-
-type ReduceArgs struct {
-	Word string
-	List []MapResults
-}
-
-type ReduceResults struct {
-	Value string
-}
-
 func main() {
-	client, err := rpc.Dial("tcp", "localhost:8080")
+	if err := server.Register(); err != nil {
+		log.Fatal(err)
+	}
+
+	l, err := net.Listen("tcp", ":8080")
 	if err != nil {
-		fmt.Println("Error connecting:", err)
-		return
-	}
-	defer client.Close()
-
-	MapArgs := MapArgs{
-		Key:     "doc-0",
-		Content: "foo bar baz foo",
+		log.Fatal(err)
 	}
 
-	var mpr []MapResults
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+			go rpc.ServeConn(conn)
+		}
+	}()
 
-	err = client.Call("Tasks.FMap", MapArgs, &mpr)
-	if err != nil {
-		fmt.Println("Error calling Tasks.FMap:", err)
-		return
-	}
+	var wg sync.WaitGroup
 
-	var rdr ReduceResults
+	inputs := []string{"foo", "bar", "baz", "foo bar baz"}
 
-	RedArgs := ReduceArgs{
-		Word: "foo",
-		List: mpr,
-	}
+	master := worker.NewMaster(&wg, inputs, 4)
+	defer master.Cleanup()
 
-	err = client.Call("Tasks.FReduce", RedArgs, &rdr)
-	if err != nil {
-		fmt.Println("Error calling Tasks.FReduce:", err)
-		return
-	}
+	master.Start()
+	wg.Wait()
 
-	fmt.Println(rdr)
+	fmt.Println(master.Outputs)
 }
